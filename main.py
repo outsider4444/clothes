@@ -2,11 +2,12 @@ import databases
 import enum
 import sqlalchemy
 
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 
 from fastapi import FastAPI
 from decouple import config
 
+from email_validator import validate_email as validate_e, EmailNotValidError
 
 DATABASE_URL = f"postgresql://{config('DB_USER')}:{config('DB_PASSWORD')}@localhost:5432/clothes"
 
@@ -71,6 +72,21 @@ clothes = sqlalchemy.Table(
 class BaseUser(BaseModel):
     email: str
     full_name: str
+
+    @validator("email")  # Проверка верно ли указана почта
+    def validate_email(cls, value):
+        try:
+            validate_e(value)
+            return value
+        except EmailNotValidError:
+            raise ValueError("Почта указана не верно")
+
+    @validator("full_name")
+    def validate_full_name(cls, value): # cls - class
+        try:
+            first_name, last_name = value.split()
+        except Exception:
+            raise ValueError("У вас должны быть корректные имя и фамилия")
 
 
 class UserSignIn(BaseUser):
