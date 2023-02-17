@@ -1,3 +1,6 @@
+from datetime import datetime
+from typing import Optional
+
 import databases
 import enum
 import sqlalchemy
@@ -69,28 +72,40 @@ clothes = sqlalchemy.Table(
 )
 
 
-class BaseUser(BaseModel):
-    email: str
-    full_name: str
+class EmailField(str):  # Проверка почты
+    @classmethod
+    def __get_validators__(cls):
+        yield cls.validate
 
-    @validator("email")  # Проверка верно ли указана почта
-    def validate_email(cls, value):
+    def validate(cls, value) -> str:
         try:
             validate_e(value)
             return value
         except EmailNotValidError:
             raise ValueError("Почта указана не верно")
 
+
+class BaseUser(BaseModel):
+    email: EmailField
+    full_name: Optional[str]
+
     @validator("full_name")
-    def validate_full_name(cls, value): # cls - class
+    def validate_full_name(cls, value):  # cls - class
         try:
             first_name, last_name = value.split()
+            return value
         except Exception:
             raise ValueError("У вас должны быть корректные имя и фамилия")
 
 
 class UserSignIn(BaseUser):
     password: str
+
+
+class UserSignOut(BaseUser):
+    phone: Optional[str]
+    created_at: datetime
+    last_modified_at: datetime
 
 
 app = FastAPI()
@@ -106,11 +121,12 @@ async def shutdown():
     await database.connect()
 
 
-@app.post("/register/")
+@app.post("/register/", response_model=UserSignOut)
 async def create_user(user: UserSignIn):
     query = users.insert().values(**user.dict())
     id = await database.execute(query)
-    return
+    created_user = await database.fetch_one(users.select().where(users.c.id == id))
+    return created_user
 
 
 @app.get("/users/")
