@@ -12,6 +12,8 @@ from decouple import config
 
 from email_validator import validate_email as validate_e, EmailNotValidError
 
+from passlib.context import CryptContext
+
 DATABASE_URL = f"postgresql://{config('DB_USER')}:{config('DB_PASSWORD')}@localhost:5432/clothes"
 
 database = databases.Database(DATABASE_URL)
@@ -109,6 +111,7 @@ class UserSignOut(BaseUser):
 
 
 app = FastAPI()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 @app.on_event("startup")
@@ -121,15 +124,17 @@ async def shutdown():
     await database.connect()
 
 
+@app.get("/users/")
+async def users_list():
+    query = users.select()
+    return await database.fetch_all(query)
+
+
 @app.post("/register/", response_model=UserSignOut)
 async def create_user(user: UserSignIn):
+    user.password = pwd_context.hash(user.password)
     query = users.insert().values(**user.dict())
     id = await database.execute(query)
     created_user = await database.fetch_one(users.select().where(users.c.id == id))
     return created_user
 
-
-@app.get("/users/")
-async def users_list():
-    query = users.select()
-    return await database.fetch_all(query)
