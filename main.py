@@ -1,8 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import databases
 import enum
+
+import jwt
 import sqlalchemy
 
 from pydantic import BaseModel, validator
@@ -13,6 +15,8 @@ from decouple import config
 from email_validator import validate_email as validate_e, EmailNotValidError
 
 from passlib.context import CryptContext
+
+
 
 DATABASE_URL = f"postgresql://{config('DB_USER')}:{config('DB_PASSWORD')}@localhost:5432/clothes"
 
@@ -114,6 +118,14 @@ app = FastAPI()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
+def create_access_token(user):
+    try:
+        payload = {"sub": user["id"], "exp": datetime.utcnow() + timedelta(minutes=120)}
+        return jwt.encode(payload, config("JWT_SECRET"), algorithm="HS256")
+    except Exception as ex:
+        raise ex
+
+
 @app.on_event("startup")
 async def startup():
     await database.connect()
@@ -130,11 +142,14 @@ async def users_list():
     return await database.fetch_all(query)
 
 
-@app.post("/register/", response_model=UserSignOut)
+@app.post("/register/")
 async def create_user(user: UserSignIn):
     user.password = pwd_context.hash(user.password)
     query = users.insert().values(**user.dict())
     id = await database.execute(query)
     created_user = await database.fetch_one(users.select().where(users.c.id == id))
-    return created_user
+    token = create_access_token(created_user)
+    return {
+        "token": token
+    }
 
