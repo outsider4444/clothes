@@ -10,7 +10,7 @@ from jwt import ExpiredSignatureError, InvalidTokenError
 
 from pydantic import BaseModel, validator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from decouple import config
 
@@ -24,6 +24,13 @@ DATABASE_URL = f"postgresql://{config('DB_USER')}:{config('DB_PASSWORD')}@localh
 database = databases.Database(DATABASE_URL)
 
 metadata = sqlalchemy.MetaData()
+
+
+class UserRole(enum.Enum):
+    super_admin = "super admin"
+    admin = "admin"
+    user = "user"
+
 
 users = sqlalchemy.Table(
     "users",
@@ -41,6 +48,7 @@ users = sqlalchemy.Table(
         server_default=sqlalchemy.func.now(),
         onupdate=sqlalchemy.func.now(),
     ),
+    sqlalchemy.Column("role", sqlalchemy.Enum(UserRole), nullable=False, server_default=UserRole.user.name)
 )
 
 
@@ -132,6 +140,48 @@ class CustomHttpBearer(HTTPBearer):
         except InvalidTokenError:
             raise HTTPException(401, "Не верный токен")
 
+
+oauth2_scheme = CustomHttpBearer()
+
+
+def is_admin(request: Request):
+    user = request.state.user
+    if not user or user["role"] not in (UserRole.admin, UserRole.super_admin):
+        raise HTTPException(403, "У вас нет доступа к этой странице")
+
+
+@app.get("/clothes/", dependencies=[Depends(oauth2_scheme)])
+async def get_all_clothes():
+    return await database.fetch_all(clothes.select())
+
+
+class ClotheBase(BaseModel):
+    name: str
+    size: SizeEnum
+    color: ColorEnum
+
+
+class ClothesIn(ClotheBase):
+    pass
+
+
+class ClotheOut(ClotheBase):
+    id: int
+    created_at: datetime
+    last_modified_at = datetime
+
+
+@app.post("/clothes/",
+          response_model=ClotheOut,
+          dependencies=[Depends(oauth2_scheme),
+                        Depends(is_admin)],
+          status_code=201
+          )
+async def create_clothes(clothes_data: ClothesIn):
+    id_ = await database.execute(clothes.insert().values(**clothes_data.dict()))
+    return await database.fetch_one(clothes.select().where(clothes.c.id == id_))
+
+
 def create_access_token(user):
     try:
         payload = {"sub": user["id"], "exp": datetime.utcnow() + timedelta(minutes=120)}
@@ -152,11 +202,10 @@ async def shutdown():
 
 @app.get("/users/")
 async def users_list():
-    query = users.select()
-    return await database.fetch_all(query)
+    return await database.fetch_all(users.select())
 
 
-@app.post("/register/")
+@app.post("/register/", status_code=201)
 async def create_user(user: UserSignIn):
     user.password = pwd_context.hash(user.password)
     query = users.insert().values(**user.dict())
@@ -166,4 +215,3 @@ async def create_user(user: UserSignIn):
     return {
         "token": token
     }
-
