@@ -6,17 +6,18 @@ import enum
 
 import jwt
 import sqlalchemy
+from jwt import ExpiredSignatureError, InvalidTokenError
 
 from pydantic import BaseModel, validator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from decouple import config
 
 from email_validator import validate_email as validate_e, EmailNotValidError
 
 from passlib.context import CryptContext
-
-
+from starlette.requests import Request
 
 DATABASE_URL = f"postgresql://{config('DB_USER')}:{config('DB_PASSWORD')}@localhost:5432/clothes"
 
@@ -117,6 +118,19 @@ class UserSignOut(BaseUser):
 app = FastAPI()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+
+class CustomHttpBearer(HTTPBearer):
+    async def __call__(self, request: Request) -> Optional[HTTPAuthorizationCredentials]:
+        res = await super().__call__(request)
+        try:
+            payload = jwt.decode(res.credentials, config("JWT_SECRET"), algorithms=["HS256"])
+            user = await database.fetch_one(users.select().where(users.c.id == payload["sub"]))
+            request.state.user = user
+            return payload
+        except ExpiredSignatureError:
+            raise HTTPException(401, "Токен не доступен")
+        except InvalidTokenError:
+            raise HTTPException(401, "Не верный токен")
 
 def create_access_token(user):
     try:
